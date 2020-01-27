@@ -85,12 +85,13 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>particija.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -138,7 +139,26 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="bitvector.cpp" />
+    <ClCompile Include="clustercache.cpp" />
+    <ClCompile Include="direntry.cpp" />
+    <ClCompile Include="FCB.cpp" />
+    <ClCompile Include="file.cpp" />
+    <ClCompile Include="fs.cpp" />
+    <ClCompile Include="kernelfile.cpp" />
+    <ClCompile Include="kernelfs.cpp" />
     <ClCompile Include="main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="bitvector.h" />
+    <ClInclude Include="clustercache.h" />
+    <ClInclude Include="direntry.h" />
+    <ClInclude Include="FCB.h" />
+    <ClInclude Include="file.h" />
+    <ClInclude Include="fs.h" />
+    <ClInclude Include="kernelfile.h" />
+    <ClInclude Include="kernelfs.h" />
+    <ClInclude Include="part.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
