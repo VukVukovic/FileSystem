@@ -4,6 +4,7 @@
 #include <map>
 #include <set>
 #include "part.h"
+#include <mutex>
 
 class ClusterCache;
 
@@ -11,6 +12,7 @@ class CacheEntry {
 	ClusterCache* cache;
 	char* buffer;
 	ClusterNo cluster;
+
 public:
 	CacheEntry(ClusterCache* cache, char* buffer, ClusterNo cluster) :
 		cache(cache), buffer(buffer), cluster(cluster) {}
@@ -28,9 +30,10 @@ class ClusterCache {
 	std::set<ClusterNo> dirty;
 	std::list<char*> buffers;
 	Partition* partition;
+	std::mutex mtx;
 
-	bool getCluster(ClusterNo cluster);
-	bool flushDirtyCluster(ClusterNo cluster);
+	bool _getCluster(ClusterNo cluster);
+	bool _flushDirtyCluster(ClusterNo cluster);
 
 public:
 
@@ -40,8 +43,6 @@ public:
 	bool flush();
 	void clear();
 	~ClusterCache();
-
-	int getUnlocked() { return ref.size(); }
 
 	friend class CacheEntry;
 };

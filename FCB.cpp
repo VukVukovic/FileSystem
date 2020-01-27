@@ -2,11 +2,14 @@
 #include <string>
 #include "kernelfile.h"
 #include "clustercache.h"
+#include "kernelfs.h"
+#include "direntry.h"
 using namespace std;
 
 map<string, FCB*> FCB::opened_files;
 mutex FCB::mtx;
 condition_variable FCB::cv;
+KernelFS* FCB::kernelFS = nullptr;
 
 FCB::FCB(string name, ClusterNo index, BytesCnt size) 
 	: name(name), index(index), size(size)
@@ -62,7 +65,20 @@ void FCB::finishedOperation(char mode, FCB* fcb)
 
 	if (fcb->users == 0 && fcb->waiting==0) {
 		opened_files.erase(fcb->name);
-		// save FCB to disk
+		
+		char name[FNAMELEN] = { 0 }, extension[FEXTLEN] = { 0 };
+		KernelFS::split(fcb->name.c_str(), name, extension);
+
+		unsigned long int i1, j1, k1;
+		ClusterNo ci, cj;
+		bool found = kernelFS->findDirEntry(name, extension, i1, ci, j1, cj, k1);
+
+		CacheEntry cdirentr = kernelFS->cluster_cache.get(cj);
+		DirEntry* entries = (DirEntry*)cdirentr.getBuffer();
+		entries[k1].size = fcb->size;
+		cdirentr.markDirty();
+		cdirentr.unlock();
+
 		delete fcb;
 	}
 	else

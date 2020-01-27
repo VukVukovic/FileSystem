@@ -241,14 +241,14 @@ void KernelFS::clearCluster(ClusterNo cluster)
 	e.unlock();
 }
 
-char KernelFS::mount(Partition* partition)
+char KernelFS::_mount(Partition* partition, unique_lock<mutex>& lck)
 {
-	cout << EntriesPerCluster << endl;
-	cout << FileEntriesPerCluster << endl;
-	cout << "=========" << endl;
 	if (partition == nullptr)
 		return 0;
 	
+	while (current_partition != nullptr)
+		cvPartition.wait(lck);
+
 	current_partition = partition;
 
 	cluster_cache.clear();
@@ -262,10 +262,11 @@ char KernelFS::mount(Partition* partition)
 	}
 
 	root_index = bit_vector.sizeInClusters();
+	FCB::setKernelFS(this);
 	return 1;
 }
 
-char KernelFS::unmount()
+char KernelFS::_unmount()
 {
 	if (current_partition == nullptr)
 		return 0;
@@ -278,10 +279,12 @@ char KernelFS::unmount()
 	if (!cluster_cache.flush())
 		return 0;
 
+	current_partition = nullptr;
+	cvPartition.notify_all();
 	return 1;
 }
 
-char KernelFS::format()
+char KernelFS::_format()
 {
 	if (current_partition == nullptr)
 		return 0;
@@ -307,7 +310,7 @@ char KernelFS::format()
 	return 1;
 }
 
-FileCnt KernelFS::readRootDir()
+FileCnt KernelFS::_readRootDir()
 {
 	FileCnt cnt = 0;
 	char name[FNAMELEN] = { 0 }, extension[FEXTLEN] = { 0 };
@@ -320,7 +323,7 @@ FileCnt KernelFS::readRootDir()
 	return i1*EntriesPerCluster*FileEntriesPerCluster + j1*FileEntriesPerCluster + k1 + 1;
 }
 
-char KernelFS::doesExist(char* fname)
+char KernelFS::_doesExist(char* fname)
 {
 	char name[FNAMELEN] = { 0 }, extension[FEXTLEN] = { 0 };
 	if (!split(fname, name, extension)) {
@@ -333,7 +336,7 @@ char KernelFS::doesExist(char* fname)
 	return found;
 }
 
-File* KernelFS::open(char* fname, char mode)
+File* KernelFS::_open(char* fname, char mode)
 {
 	if (fname == nullptr || (mode != 'r' && mode != 'w' && mode != 'a'))
 		return nullptr;
@@ -365,13 +368,14 @@ File* KernelFS::open(char* fname, char mode)
 	ce.unlock();
 
 	KernelFile* file = FCB::newOperation(mode, str_name, de.index, de.size);
+	file->setKernelFS(this);
 	File* f = new File();
 	f->myImpl = file;
 
 	return f;
 }
 
-char KernelFS::deleteFile(char* fname)
+char KernelFS::_deleteFile(char* fname)
 {
 	char name[FNAMELEN] = { 0 }, extension[FEXTLEN] = { 0 };
 	if (!split(fname, name, extension))
@@ -406,4 +410,48 @@ char KernelFS::deleteFile(char* fname)
 
 	removeEntry(li1, lci, lj1, lcj, lk1);
 	return 1;
+}
+
+// PUBLIC INTERFACE
+
+char KernelFS::mount(Partition* partition)
+{
+	unique_lock<mutex> lck(mtx);
+	return _mount(partition, lck);
+}
+
+char KernelFS::unmount()
+{
+	unique_lock<mutex> lck(mtx);
+	return _unmount();
+}
+
+char KernelFS::format()
+{
+	unique_lock<mutex> lck(mtx);
+	return _format();
+}
+
+FileCnt KernelFS::readRootDir()
+{
+	unique_lock<mutex> lck(mtx);
+	return _readRootDir();
+}
+
+char KernelFS::doesExist(char* fname)
+{
+	unique_lock<mutex> lck(mtx);
+	return _doesExist(fname);
+}
+
+File* KernelFS::open(char* fname, char mode)
+{
+	unique_lock<mutex> lck(mtx);
+	return _open(fname, mode);
+}
+
+char KernelFS::deleteFile(char* fname)
+{
+	unique_lock<mutex> lck(mtx);
+	return _deleteFile(fname);
 }

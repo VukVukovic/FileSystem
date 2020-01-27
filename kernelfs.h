@@ -3,6 +3,7 @@
 #include "part.h"
 #include "fs.h"
 #include "clustercache.h"
+#include <condition_variable>
 
 class FCB;
 
@@ -16,6 +17,8 @@ class KernelFS {
 	BitVector bit_vector;
 	ClusterNo root_index;
 	ClusterCache cluster_cache;
+	std::mutex mtx;
+	std::condition_variable cvPartition;
 
 	void formatRoot();
 	bool findDirEntry(char name[FNAMELEN], char extension[FEXTLEN], 
@@ -28,7 +31,16 @@ class KernelFS {
 	bool removeEntry(unsigned long i1, ClusterNo ci, unsigned long j1, ClusterNo cj, unsigned long k1);
 	bool deallocate(ClusterNo cj, unsigned long k1);
 
+	char _mount(Partition* partition, std::unique_lock<std::mutex>&);
+	char _unmount();
+	char _format();
+	FileCnt _readRootDir();
+	char _doesExist(char* fname);
+	File* _open(char* fname, char mode);
+	char _deleteFile(char* fname);
+
 	friend class KernelFile;
+	friend class FCB;
 public:
 	KernelFS() : cluster_cache(128) {}
 

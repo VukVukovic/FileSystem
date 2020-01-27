@@ -8,76 +8,80 @@ mutex mtx;
 
 FS::~FS()
 {
-	unique_lock<mutex> lck(mtx);
-	if (myImpl != nullptr) {
-		delete myImpl;
-		myImpl = nullptr;
-	}
+	// will not be called
+}
+
+FS::FS()
+{
+	// will not be called
 }
 
 char FS::mount(Partition* partition)
 {
-	unique_lock<mutex> lck(mtx);
+	mtx.lock();
 	if (myImpl == nullptr)
 		myImpl = new KernelFS();
+	mtx.unlock();
 
 	return myImpl->mount(partition);
 }
 
 char FS::unmount()
 {
-	unique_lock<mutex> lck(mtx);
+	mtx.lock();
 	if (myImpl == nullptr)
 		myImpl = new KernelFS();
+	mtx.unlock();
 
 	return myImpl->unmount();
 }
 
 char FS::format()
 {
-	unique_lock<mutex> lck(mtx);
+	mtx.lock();
 	if (myImpl == nullptr)
 		myImpl = new KernelFS();
+	mtx.unlock();
 
 	return myImpl->format();
 }
 
 FileCnt FS::readRootDir()
 {
-	unique_lock<mutex> lck(mtx);
+	mtx.lock();
 	if (myImpl == nullptr)
 		myImpl = new KernelFS();
+	mtx.unlock();
 
 	return myImpl->readRootDir();
 }
 
 char FS::doesExist(char* fname)
 {
-	unique_lock<mutex> lck(mtx);
+	mtx.lock();
 	if (myImpl == nullptr)
 		myImpl = new KernelFS();
+	mtx.unlock();
 
 	return myImpl->doesExist(fname);
 }
 
 File* FS::open(char* fname, char mode)
 {
-	unique_lock<mutex> lck(mtx);
+	mtx.lock();
 	if (myImpl == nullptr)
 		myImpl = new KernelFS();
+	mtx.unlock();
 
 	return myImpl->open(fname, mode);
 }
 
 char FS::deleteFile(char* fname)
 {
-	unique_lock<mutex> lck(mtx);
+	mtx.lock();
 	if (myImpl == nullptr)
 		myImpl = new KernelFS();
+	mtx.unlock();
 
 	return myImpl->deleteFile(fname);
-}
-
-FS::FS()
-{
 }

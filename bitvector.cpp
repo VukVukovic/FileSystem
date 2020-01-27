@@ -4,50 +4,43 @@
 #include "clustercache.h"
 
 #include <iostream>
+using namespace std;
 
 const unsigned long BitVector::BitsPerCluster = ClusterSize * 8;
 
-void BitVector::claim(unsigned long i)
+void BitVector::_claim(unsigned long i)
 {
-	if (i >= size) {
-		return;
-	}
-
 	unsigned long j = i / 8;
 	unsigned long k = i % 8;
 	bit_vector[j] &= ~(1U << k);
 }
 
-void BitVector::free(unsigned long i)
+void BitVector::_free(unsigned long i)
 {
-	if (i >= size) {
-		return;
-	}
-
 	unsigned long j = i / 8;
 	unsigned long k = i % 8;
 	bit_vector[j] |= (1U << k);
 }
 
-bool BitVector::isFree(unsigned long i) const
+void BitVector::claim(unsigned long i)
 {
-	if (i >= size) {
-		return false;
-	}
+	if (i >= size)
+		return;
 
-	unsigned long j = i / 8;
-	unsigned long k = i % 8;
-	return (bit_vector[j] & (1U << k)) != 0;
+	unique_lock<mutex> lck(mtx);
+	_claim(i);
 }
 
-unsigned long BitVector::findClaim()
+void BitVector::free(unsigned long i)
 {
-	ClusterNo newCluster = findFree();
-	claim(newCluster);
-	return newCluster;
+	if (i >= size)
+		return;
+
+	unique_lock<mutex> lck(mtx);
+	_free(i);
 }
 
-unsigned long BitVector::findFree() const
+unsigned long BitVector::_findFree() const
 {
 	for (unsigned long i = 0; i < ClusterSize * cluster_num; i++) {
 		if (bit_vector[i] != 0) {
@@ -65,13 +58,29 @@ unsigned long BitVector::findFree() const
 	return 0;
 }
 
+unsigned long BitVector::findClaim()
+{
+	unique_lock<mutex> lck(mtx);
+
+	unsigned long newCluster = _findFree();
+	if (newCluster == 0)
+		return 0;
+
+	unsigned long j = newCluster / 8;
+	unsigned long k = newCluster% 8;
+	bit_vector[j] &= ~(1U << k);
+	return newCluster;
+}
+
 void BitVector::freeAll()
 {
+	unique_lock<mutex> lck(mtx);
 	memset(bit_vector, 0xFF, ClusterSize * cluster_num);
 }
 
 void BitVector::init(unsigned long _size)
 {
+	unique_lock<mutex> lck(mtx);
 	size = _size;
 	int new_cluster_num = _size / BitsPerCluster + (_size % BitsPerCluster != 0);
 
@@ -89,6 +98,7 @@ void BitVector::init(unsigned long _size)
 
 bool BitVector::load(ClusterCache& cc)
 {
+	unique_lock<mutex> lck(mtx);
 	for (ClusterNo i = 0; i < cluster_num; i++) {
 		CacheEntry e = cc.get(i);
 		if (e.getBuffer() == nullptr) {
@@ -102,6 +112,7 @@ bool BitVector::load(ClusterCache& cc)
 
 bool BitVector::store(ClusterCache& cc)
 {
+	unique_lock<mutex> lck(mtx);
 	for (ClusterNo i = 0; i < cluster_num; i++) {
 		CacheEntry e = cc.get(i);
 		if (e.getBuffer() == nullptr) {

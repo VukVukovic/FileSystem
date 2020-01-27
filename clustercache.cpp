@@ -10,13 +10,16 @@ ClusterCache::ClusterCache(int size) : size(size) {
 
 CacheEntry ClusterCache::get(ClusterNo cluster)
 {
+	unique_lock<mutex> lck(mtx);
+
 	char* retBuffer = nullptr;
-	if (getCluster(cluster))
+	if (_getCluster(cluster))
 		retBuffer = map[cluster].first;
 	return CacheEntry(this, retBuffer, cluster);
 }
 
-bool ClusterCache::getCluster(ClusterNo cluster) {
+bool ClusterCache::_getCluster(ClusterNo cluster) {
+
 	if (map.find(cluster) != map.end()) {
 		if (map[cluster].second != ref.end())
 			ref.erase(map[cluster].second);
@@ -27,7 +30,7 @@ bool ClusterCache::getCluster(ClusterNo cluster) {
 	else {
 		if (map.size() == size) {
 			ClusterNo last = ref.back();			
-			if (!flushDirtyCluster(last))
+			if (!_flushDirtyCluster(last))
 				return false;
 				
 			ref.pop_back();
@@ -46,7 +49,7 @@ bool ClusterCache::getCluster(ClusterNo cluster) {
 	return true;
 }
 
-bool ClusterCache::flushDirtyCluster(ClusterNo cluster)
+bool ClusterCache::_flushDirtyCluster(ClusterNo cluster)
 {
 	if (dirty.find(cluster) != dirty.end()) {
 		if (!partition->writeCluster(cluster, map[cluster].first))
@@ -58,20 +61,26 @@ bool ClusterCache::flushDirtyCluster(ClusterNo cluster)
 
 void ClusterCache::setPartititon(Partition* partition)
 {
+	unique_lock<mutex> lck(mtx);
+
 	this->partition = partition;
 }
 
 bool ClusterCache::flush()
 {
+	unique_lock<mutex> lck(mtx);
+
 	bool ret = true;
 	for (ClusterNo cluster : ref)
-		if (!flushDirtyCluster(cluster))
+		if (!_flushDirtyCluster(cluster))
 			ret = false;
 	return ret;
 }
 
 void ClusterCache::clear()
 {
+	unique_lock<mutex> lck(mtx);
+
 	partition = nullptr;
 	for (ClusterNo cluster : ref)
 		buffers.push_back(map[cluster].first);
@@ -89,11 +98,14 @@ ClusterCache::~ClusterCache()
 
 void CacheEntry::markDirty()
 {
+	unique_lock<mutex> lck(cache->mtx);
 	cache->dirty.insert(cluster);
 }
 
 void CacheEntry::unlock()
 {
+	unique_lock<mutex> lck(cache->mtx);
+
 	if (--(cache->lockCnt[cluster]) == 0) {
 		cache->lockCnt.erase(cluster);
 		cache->ref.push_front(cluster);

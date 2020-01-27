@@ -23,10 +23,12 @@ class FCB {
 	static std::map<std::string, FCB*> opened_files;
 	static std::mutex mtx;
 	static std::condition_variable cv;
+	static KernelFS* kernelFS;
 
 	FCB(std::string name, ClusterNo index, BytesCnt size);
 	
 public:
+	static void setKernelFS(KernelFS* kfs) { kernelFS = kfs; }
 	static bool isOpen(std::string name);
 	static bool isAnyOpen();
 	static KernelFile* newOperation(char mode, std::string name, ClusterNo index, BytesCnt size);

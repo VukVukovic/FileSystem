@@ -16,11 +16,11 @@ class KernelFile {
     BytesCnt pos=0;
     KernelFS* kernelFS;
 
-    bool allocate(unsigned long clusterNum);
-    bool deallocate(unsigned long clusterNum);
+    bool allocate(unsigned long to_alloc);
+    bool deallocate(unsigned long to_dealloc, BytesCnt new_size);
 
 public:
-    KernelFile(char mode, FCB* fcb) : mode(mode), fcb(fcb) {}
+    KernelFile(char mode, FCB* fcb) : mode(mode), fcb(fcb) { if (mode == 'a') pos = fcb->size; }
     void setKernelFS(KernelFS* kfs);
     char write(BytesCnt cnt, char* buffer);
     BytesCnt read(BytesCnt cnt, char* buffer);
