@@ -2,8 +2,8 @@
 
 #include "part.h"
 
-struct FindDirResult {
-	bool found;
+struct DirResult {
+	bool success;
 	unsigned long i;
 	ClusterNo ci;
 	unsigned long j;

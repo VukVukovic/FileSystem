@@ -155,6 +155,7 @@
     <ClInclude Include="direntry.h" />
     <ClInclude Include="FCB.h" />
     <ClInclude Include="file.h" />
+    <ClInclude Include="FindDirResult.h" />
     <ClInclude Include="fs.h" />
     <ClInclude Include="kernelfile.h" />
     <ClInclude Include="kernelfs.h" />

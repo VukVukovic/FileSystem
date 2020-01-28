@@ -18,70 +18,77 @@ FS::FS()
 
 char FS::mount(Partition* partition)
 {
-	mtx.lock();
-	if (myImpl == nullptr)
-		myImpl = new KernelFS();
-	mtx.unlock();
+	{
+		unique_lock<mutex> lck(mtx);
+		if (myImpl == nullptr)
+			myImpl = new KernelFS();
+	}
 
 	return myImpl->mount(partition);
 }
 
 char FS::unmount()
 {
-	mtx.lock();
-	if (myImpl == nullptr)
-		myImpl = new KernelFS();
-	mtx.unlock();
+	{
+		unique_lock<mutex> lck(mtx);
+		if (myImpl == nullptr)
+			myImpl = new KernelFS();
+	}
 
 	return myImpl->unmount();
 }
 
 char FS::format()
 {
-	mtx.lock();
-	if (myImpl == nullptr)
-		myImpl = new KernelFS();
-	mtx.unlock();
+	{
+		unique_lock<mutex> lck(mtx);
+		if (myImpl == nullptr)
+			myImpl = new KernelFS();
+	}
 
 	return myImpl->format();
 }
 
 FileCnt FS::readRootDir()
 {
-	mtx.lock();
-	if (myImpl == nullptr)
-		myImpl = new KernelFS();
-	mtx.unlock();
+	{
+		unique_lock<mutex> lck(mtx);
+		if (myImpl == nullptr)
+			myImpl = new KernelFS();
+	}
 
 	return myImpl->readRootDir();
 }
 
 char FS::doesExist(char* fname)
 {
-	mtx.lock();
-	if (myImpl == nullptr)
-		myImpl = new KernelFS();
-	mtx.unlock();
+	{
+		unique_lock<mutex> lck(mtx);
+		if (myImpl == nullptr)
+			myImpl = new KernelFS();
+	}
 
 	return myImpl->doesExist(fname);
 }
 
 File* FS::open(char* fname, char mode)
 {
-	mtx.lock();
-	if (myImpl == nullptr)
-		myImpl = new KernelFS();
-	mtx.unlock();
+	{
+		unique_lock<mutex> lck(mtx);
+		if (myImpl == nullptr)
+			myImpl = new KernelFS();
+	}
 
 	return myImpl->open(fname, mode);
 }
 
 char FS::deleteFile(char* fname)
 {
-	mtx.lock();
-	if (myImpl == nullptr)
-		myImpl = new KernelFS();
-	mtx.unlock();
+	{
+		unique_lock<mutex> lck(mtx);
+		if (myImpl == nullptr)
+			myImpl = new KernelFS();
+	}
 
 	return myImpl->deleteFile(fname);
 }

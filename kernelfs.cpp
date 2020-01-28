@@ -1,7 +1,8 @@
 #include "kernelfs.h"
 #include "direntry.h"
 #include "kernelfile.h"
-
+#include "FCB.h"
+#include <string>
 #include <iostream>
 using namespace std;
 
@@ -10,8 +11,9 @@ const unsigned long KernelFS::FileEntriesPerCluster =
 const unsigned long KernelFS::EntriesPerCluster =
 					ClusterSize / sizeof(ClusterNo);
 
+map<string, FCB*> KernelFS::opened_files;
 
-void KernelFS::formatRoot()
+void KernelFS::_formatRoot()
 {
 	CacheEntry e = cluster_cache.get(root_index);
 	memset(e.getBuffer(), 0, ClusterSize);
@@ -19,30 +21,29 @@ void KernelFS::formatRoot()
 	e.unlock();
 }
 
-bool KernelFS::findDirEntry(char name[FNAMELEN], char extension[FEXTLEN],
-	unsigned long& i1, ClusterNo& ci, 
-	unsigned long& j1, ClusterNo& cj, 
-	unsigned long& k1)
+DirResult KernelFS::_findDirEntry(char name[FNAMELEN], char extension[FEXTLEN])
 {
-	i1 = j1 = k1 = -1;
+	DirResult result;
+	result.i = result.j = result.k = -1;
+
 	CacheEntry e0 = cluster_cache.get(root_index);
 	ClusterNo* index0 = (ClusterNo*)e0.getBuffer();
 	bool found = false;
 
 	for (unsigned long i = 0; i < EntriesPerCluster && index0[i] != 0; ++i) {
-		i1 = i;
-		ci = index0[i];
+		result.i = i;
+		result.ci = index0[i];
 		CacheEntry e1 = cluster_cache.get(index0[i]);
 		ClusterNo* index1 = (ClusterNo*)e1.getBuffer();
 
 		for (unsigned long j = 0; j < EntriesPerCluster && index1[j] != 0; ++j) {
-			j1 = j;
-			cj = index1[j];
+			result.j = j;
+			result.cj = index1[j];
 			CacheEntry entr = cluster_cache.get(index1[j]);
 			DirEntry* entries = (DirEntry*)entr.getBuffer();
 			
 			for (unsigned long k = 0; k < FileEntriesPerCluster && !entries[k].empty(); ++k) {
-				k1 = k;
+				result.k = k;
 				if (entries[k].equals(name, extension)) {
 					found = true;
 					break;
@@ -57,38 +58,39 @@ bool KernelFS::findDirEntry(char name[FNAMELEN], char extension[FEXTLEN],
 	}
 	
 	e0.unlock();
-	return found;
+	result.success = found;
+	return result;
 }
 
-bool KernelFS::removeEntry(unsigned long i1, ClusterNo ci, unsigned long j1, ClusterNo cj, unsigned long k1)
+bool KernelFS::_removeEntry(const DirResult& r)
 {
-	CacheEntry ce = cluster_cache.get(cj);
+	CacheEntry ce = cluster_cache.get(r.cj);
 	DirEntry* entries = (DirEntry*)ce.getBuffer();
-	memset(entries + k1, 0, sizeof(DirEntry));
+	memset(entries + r.k, 0, sizeof(DirEntry));
 	ce.markDirty();
 	ce.unlock();
 
-	if (k1 == 0) {
-		CacheEntry ce1 = cluster_cache.get(ci);
+	if (r.k == 0) {
+		CacheEntry ce1 = cluster_cache.get(r.ci);
 		ClusterNo* index1 = (ClusterNo*)ce1.getBuffer();
-		index1[j1] = 0;
+		index1[r.j] = 0;
 		ce1.markDirty();
 		ce1.unlock();
-		bit_vector.free(cj);
+		bit_vector.free(r.cj);
 
-		if (j1 == 0) {
+		if (r.j == 0) {
 			CacheEntry ce0 = cluster_cache.get(root_index);
 			ClusterNo* index0 = (ClusterNo*)ce0.getBuffer();
-			index0[i1] = 0;
+			index0[r.i] = 0;
 			ce0.markDirty();
 			ce0.unlock();
-			bit_vector.free(ci);
+			bit_vector.free(r.ci);
 		}
 	}
 	return true;
 }
 
-bool KernelFS::deallocate(ClusterNo cj, unsigned long k1)
+bool KernelFS::_deallocateFileClusters(ClusterNo cj, unsigned long k1)
 {
 	CacheEntry ce = cluster_cache.get(cj);
 	DirEntry* entries = (DirEntry*)ce.getBuffer();
@@ -96,7 +98,6 @@ bool KernelFS::deallocate(ClusterNo cj, unsigned long k1)
 	entries[k1].index = 0;
 	ce.markDirty();
 	ce.unlock();
-
 
 	CacheEntry ceind0 = cluster_cache.get(ind0cluster);
 	ClusterNo* index0 = (ClusterNo*)ceind0.getBuffer();
@@ -117,7 +118,66 @@ bool KernelFS::deallocate(ClusterNo cj, unsigned long k1)
 	return true;
 }
 
-bool KernelFS::split(const char* fname, char name[FNAMELEN], char ext[FEXTLEN])
+void KernelFS::_finishedOperation(FCB* fcb, char mode, std::unique_lock<std::mutex>&)
+{
+	cout << "FINISHED OPERATION!" << endl;
+	if (mode == 'r')
+		fcb->users--;
+	else
+		fcb->exclusive = false;
+	
+	cout << fcb->users << " " << fcb->exclusive << " " << fcb->waiting << endl;
+
+	// notify waiting for file
+	if (fcb->users == 0 && !fcb->exclusive)
+		fcb->cvOpen.notify_all();
+
+	if (fcb->users == 0 && !fcb->exclusive && fcb->waiting == 0) {
+		opened_files.erase(fcb->name);
+
+		char name[FNAMELEN] = { 0 }, extension[FEXTLEN] = { 0 };
+		_split(fcb->name.c_str(), name, extension);
+		DirResult result = _findDirEntry(name, extension);
+
+		CacheEntry cdirentr = cluster_cache.get(result.cj);
+		DirEntry* entries = (DirEntry*)cdirentr.getBuffer();
+		entries[result.k].size = fcb->size;
+		cdirentr.markDirty();
+		cdirentr.unlock();
+
+		// notify that all files are closed
+		if (opened_files.size() == 0)
+			cvOpenFiles.notify_all();
+
+		delete fcb;
+	}
+}
+
+KernelFile* KernelFS::_newOperation(char mode, std::string name, ClusterNo index, BytesCnt size, std::unique_lock<std::mutex>&  lck)
+{
+	FCB* fcb;
+	if (opened_files.find(name) != opened_files.end())
+		fcb = opened_files[name];
+	else {
+		fcb = new FCB(name, index, size);
+		opened_files[name] = fcb;
+	}
+
+	fcb->waiting++;
+	while ((mode == 'r' && fcb->exclusive) || (mode != 'r' && (fcb->exclusive || fcb->users > 0)))
+		(fcb->cvOpen).wait(lck);
+	fcb->waiting--;
+
+	if (mode == 'r')
+		fcb->users++;
+	else
+		fcb->exclusive = true;
+
+	KernelFile* kfile = new KernelFile(mode, fcb);
+	return kfile;
+}
+
+bool KernelFS::_split(const char* fname, char name[FNAMELEN], char ext[FEXTLEN])
 {
 	int len = strlen(fname);
 
@@ -147,37 +207,36 @@ bool KernelFS::split(const char* fname, char name[FNAMELEN], char ext[FEXTLEN])
 	return true;
 }
 
-bool KernelFS::createFile(char name[FNAMELEN], char extension[FEXTLEN], 
-	unsigned long& i1, ClusterNo& ci, unsigned long& j1, ClusterNo& cj, 
-	unsigned long& k1, bool inPlace)
+DirResult KernelFS::_createFile(char name[FNAMELEN], char extension[FEXTLEN], const DirResult& r_info, bool inPlace)
 {
+	DirResult r = r_info;
 	bool noSpace = false, init0 = false, init1=false;
 	if (!inPlace) {
-		if (k1 == FileEntriesPerCluster - 1) {
-			k1 = -1;
-			j1++;
+		if (r.k == FileEntriesPerCluster - 1) {
+			r.k = -1;
+			r.j++;
 			init1 = true;
 
-			if (j1 == EntriesPerCluster) {
-				j1 = -1;
-				i1++;
+			if (r.j == EntriesPerCluster) {
+				r.j = -1;
+				r.i++;
 				init0 = true;
 
-				if (i1 == EntriesPerCluster)
+				if (r.i == EntriesPerCluster)
 					noSpace = true;
 			}
 		}
 
-		if (!noSpace && (i1 == -1 || init0)) {
+		if (!noSpace && (r.i == -1 || init0)) {
 			CacheEntry e0 = cluster_cache.get(root_index);
 			ClusterNo* index0 = (ClusterNo*)e0.getBuffer();
 			ClusterNo newCluster = bit_vector.findClaim();
 
 			if (newCluster > 0) {
-				if (i1 == -1) i1 = 0;
-				index0[i1] = newCluster;
-				ci = newCluster;
-				clearCluster(newCluster);
+				if (r.i == -1) r.i = 0;
+				index0[r.i] = newCluster;
+				r.ci = newCluster;
+				_clearCluster(newCluster);
 				e0.markDirty();
 			}
 			else
@@ -186,16 +245,16 @@ bool KernelFS::createFile(char name[FNAMELEN], char extension[FEXTLEN],
 			e0.unlock();
 		}
 
-		if (!noSpace && (j1 == -1 || init1)) {
-			CacheEntry e1 = cluster_cache.get(ci);
+		if (!noSpace && (r.j == -1 || init1)) {
+			CacheEntry e1 = cluster_cache.get(r.ci);
 			ClusterNo* index1 = (ClusterNo*)e1.getBuffer();
 			ClusterNo newCluster = bit_vector.findClaim();
 
 			if (newCluster > 0) {
-				if (j1 == -1) j1 = 0;
-				index1[j1] = newCluster;
-				cj = newCluster;
-				clearCluster(newCluster);
+				if (r.j == -1) r.j = 0;
+				index1[r.j] = newCluster;
+				r.cj = newCluster;
+				_clearCluster(newCluster);
 				e1.markDirty();
 			}
 			else
@@ -207,22 +266,22 @@ bool KernelFS::createFile(char name[FNAMELEN], char extension[FEXTLEN],
 
 	if (!noSpace) {
 		if (!inPlace) {
-			if (k1 == -1) k1 = 0;
-			else k1++;
+			if (r.k == -1) r.k = 0;
+			else r.k++;
 		}
 
-		CacheEntry entr = cluster_cache.get(cj);
+		CacheEntry entr = cluster_cache.get(r.cj);
 		DirEntry* entries = (DirEntry*)entr.getBuffer();
 
 		ClusterNo newCluster = bit_vector.findClaim();
 
 		if (newCluster > 0) {
 			//cout << name << endl;
-			strncpy(entries[k1].name, name, FNAMELEN);
-			strncpy(entries[k1].extension, extension, FEXTLEN);
-			entries[k1].size = 0;
-			entries[k1].index = newCluster;
-			clearCluster(newCluster);
+			strncpy(entries[r.k].name, name, FNAMELEN);
+			strncpy(entries[r.k].extension, extension, FEXTLEN);
+			entries[r.k].size = 0;
+			entries[r.k].index = newCluster;
+			_clearCluster(newCluster);
 			entr.markDirty();
 		}
 		else
@@ -230,10 +289,11 @@ bool KernelFS::createFile(char name[FNAMELEN], char extension[FEXTLEN],
 		entr.unlock();
 	}
 
-	return !noSpace;
+	r.success = !noSpace;
+	return r;
 }
 
-void KernelFS::clearCluster(ClusterNo cluster)
+void KernelFS::_clearCluster(ClusterNo cluster)
 {
 	CacheEntry e = cluster_cache.get(cluster);
 	memset(e.getBuffer(), 0, ClusterSize);
@@ -262,14 +322,21 @@ char KernelFS::_mount(Partition* partition, unique_lock<mutex>& lck)
 	}
 
 	root_index = bit_vector.sizeInClusters();
-	FCB::setKernelFS(this);
 	return 1;
 }
 
-char KernelFS::_unmount()
+char KernelFS::_unmount(std::unique_lock<std::mutex>& lck)
 {
 	if (current_partition == nullptr)
 		return 0;
+
+	// wait for all files to be closed
+	while (opened_files.size() > 0) {
+		cout << "OPENED FILES " << opened_files.size() << endl;
+		for (auto p : opened_files)
+			cout << p.first << endl;
+		cvOpenFiles.wait(lck);
+	}
 
 	// store bit vector
 	if (!bit_vector.store(cluster_cache))
@@ -284,10 +351,16 @@ char KernelFS::_unmount()
 	return 1;
 }
 
-char KernelFS::_format()
+char KernelFS::_format(unique_lock<mutex>& lck)
 {
 	if (current_partition == nullptr)
 		return 0;
+
+	started_format = true;
+
+	// wait for all files to be closed
+	while (opened_files.size() > 0)
+		cvOpenFiles.wait(lck);
 
 	// clear bit vector
 	bit_vector.freeAll();
@@ -303,10 +376,11 @@ char KernelFS::_format()
 	}
 	
 	// format dir index0 with 0
-	formatRoot();
+	_formatRoot();
 
 	// flush cache
 	cluster_cache.flush();
+	started_format = false;
 	return 1;
 }
 
@@ -314,60 +388,66 @@ FileCnt KernelFS::_readRootDir()
 {
 	FileCnt cnt = 0;
 	char name[FNAMELEN] = { 0 }, extension[FEXTLEN] = { 0 };
-	unsigned long i1, _, j1, __, k1;
-	findDirEntry(name, extension, i1, _, j1, __, k1);
+	
+	DirResult result = _findDirEntry(name, extension);
 
-	if (i1 == -1 || j1 == -1)
+	if (result.i == -1 || result.j == -1)
 		return 0;
 
-	return i1*EntriesPerCluster*FileEntriesPerCluster + j1*FileEntriesPerCluster + k1 + 1;
+	return result.i*EntriesPerCluster*FileEntriesPerCluster + 
+			result.j*FileEntriesPerCluster + result.k + 1;
 }
 
 char KernelFS::_doesExist(char* fname)
 {
 	char name[FNAMELEN] = { 0 }, extension[FEXTLEN] = { 0 };
-	if (!split(fname, name, extension)) {
+	if (!_split(fname, name, extension))
 		return 0;
-	}
-	 
-	unsigned long _1,_2,_3,_4,_5;
-	bool found = findDirEntry(name, extension, _1, _2, _3, _4, _5);
-	cout << " (" << _2 << " " << _4 << ") " << endl;
-	return found;
+
+	DirResult result = _findDirEntry(name, extension);
+	return result.success;
 }
 
-File* KernelFS::_open(char* fname, char mode)
+File* KernelFS::_open(char* fname, char mode, std::unique_lock<std::mutex>& lck)
 {
-	if (fname == nullptr || (mode != 'r' && mode != 'w' && mode != 'a'))
+	if (fname == nullptr || started_format || (mode != 'r' && mode != 'w' && mode != 'a'))
 		return nullptr;
 
 	char name[FNAMELEN] = { 0 }, extension[FEXTLEN] = { 0 };
-	if (!split(fname, name, extension))
+	if (!_split(fname, name, extension))
 		return nullptr;
 
 	string str_name = fname;
 
-	unsigned long int i1, j1, k1;
-	ClusterNo ci, cj;
-	bool found = findDirEntry(name, extension, i1, ci, j1, cj, k1);
+	DirResult result = _findDirEntry(name, extension);
+	bool found = result.success;
 
 	if ((mode == 'r' || mode == 'a') && !found)
 		return nullptr;
 
 	if (mode == 'w') {
-		if (found)
-			deallocate(cj, k1); // ako je otvoren, blokiraj se?
+		if (found) {
+			while (opened_files.find(str_name) != opened_files.end())
+				opened_files[str_name]->cvOpen.wait(lck);
 
-		bool created = createFile(name, extension, i1, ci, j1, cj, k1, found); // override = found
-		if (!created)
+			// if file was deleted while waiting for closure
+			result = _findDirEntry(name, extension);
+			found = result.success;
+
+			if (found)
+				_deallocateFileClusters(result.cj, result.k);
+		}
+			
+		result = _createFile(name, extension, result, found); // override = found
+		if (!result.success)
 			return nullptr;
 	}
 
-	CacheEntry ce = cluster_cache.get(cj);
-	DirEntry de = ((DirEntry*)ce.getBuffer())[k1];
+	CacheEntry ce = cluster_cache.get(result.cj);
+	DirEntry de = ((DirEntry*)ce.getBuffer())[result.k];
 	ce.unlock();
 
-	KernelFile* file = FCB::newOperation(mode, str_name, de.index, de.size);
+	KernelFile* file = _newOperation(mode, str_name, de.index, de.size, lck);
 	file->setKernelFS(this);
 	File* f = new File();
 	f->myImpl = file;
@@ -378,37 +458,34 @@ File* KernelFS::_open(char* fname, char mode)
 char KernelFS::_deleteFile(char* fname)
 {
 	char name[FNAMELEN] = { 0 }, extension[FEXTLEN] = { 0 };
-	if (!split(fname, name, extension))
+	if (!_split(fname, name, extension))
 		return 0;
 
-	unsigned long int i1, j1, k1;
-	ClusterNo ci, cj;
-	bool found = findDirEntry(name, extension, i1, ci, j1, cj, k1);
+	DirResult result = _findDirEntry(name, extension);
+	bool found = result.success;
 	if (!found)
 		return 0;
 
 	char name0[FNAMELEN] = { 0 }, extension0[FEXTLEN] = { 0 };
-	unsigned long int li1, lj1, lk1;
-	ClusterNo lci, lcj;
-	bool last_found = findDirEntry(name0, extension0, li1, lci, lj1, lcj, lk1);
 
-	deallocate(cj, k1);
+	DirResult result_last = _findDirEntry(name0, extension0);
 
-	if (!(i1 == li1 && j1 == lj1 && lk1 == k1)) {
-		CacheEntry ce_del = cluster_cache.get(cj);
-		CacheEntry ce_last = cluster_cache.get(lcj);
+	_deallocateFileClusters(result.cj, result.k);
+	if (!(result.i == result_last.i && result.j == result_last.j && result.k == result_last.k)) {
+		CacheEntry ce_del = cluster_cache.get(result.cj);
+		CacheEntry ce_last = cluster_cache.get(result_last.cj);
 
 		DirEntry* entries_del = (DirEntry*)ce_del.getBuffer();
 		DirEntry* entries_last = (DirEntry*)ce_last.getBuffer();
 
-		memcpy(entries_del + k1, entries_last + lk1, sizeof(DirEntry));
+		memcpy(entries_del + result.k, entries_last + result_last.k, sizeof(DirEntry));
 
 		ce_last.unlock();
 		ce_del.markDirty();
 		ce_del.unlock();
 	}
 
-	removeEntry(li1, lci, lj1, lcj, lk1);
+	_removeEntry(result_last);
 	return 1;
 }
 
@@ -423,13 +500,13 @@ char KernelFS::mount(Partition* partition)
 char KernelFS::unmount()
 {
 	unique_lock<mutex> lck(mtx);
-	return _unmount();
+	return _unmount(lck);
 }
 
 char KernelFS::format()
 {
 	unique_lock<mutex> lck(mtx);
-	return _format();
+	return _format(lck);
 }
 
 FileCnt KernelFS::readRootDir()
@@ -447,11 +524,17 @@ char KernelFS::doesExist(char* fname)
 File* KernelFS::open(char* fname, char mode)
 {
 	unique_lock<mutex> lck(mtx);
-	return _open(fname, mode);
+	return _open(fname, mode, lck);
 }
 
 char KernelFS::deleteFile(char* fname)
 {
 	unique_lock<mutex> lck(mtx);
 	return _deleteFile(fname);
+}
+
+void KernelFS::finishedOperation(FCB* fcb, char mode)
+{
+	unique_lock<mutex> lck(mtx);
+	_finishedOperation(fcb, mode, lck);
 }

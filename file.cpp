@@ -1,8 +1,12 @@
 #include "file.h"
 #include "kernelfile.h"
 
+#include <iostream>
+using namespace std;
+
 File::~File()
 {
+	cout << "FILE DEST" << endl;
 	delete myImpl;
 	myImpl = nullptr;
 }

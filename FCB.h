@@ -7,12 +7,8 @@
 #include <mutex>
 #include <condition_variable>
 
-class KernelFile;
-class ClusterCache;
 
 class FCB {
-	friend class KernelFile;
-
 	std::string name;
 	ClusterNo index;
 	BytesCnt size;
@@ -20,17 +16,13 @@ class FCB {
 	bool exclusive = false;
 	int users = 0, waiting=0;
 
-	static std::map<std::string, FCB*> opened_files;
-	static std::mutex mtx;
-	static std::condition_variable cv;
-	static KernelFS* kernelFS;
+	std::condition_variable cvOpen;
 
-	FCB(std::string name, ClusterNo index, BytesCnt size);
-	
+	friend class KernelFS;
 public:
-	static void setKernelFS(KernelFS* kfs) { kernelFS = kfs; }
-	static bool isOpen(std::string name);
-	static bool isAnyOpen();
-	static KernelFile* newOperation(char mode, std::string name, ClusterNo index, BytesCnt size);
-	static void finishedOperation(char mode, FCB* fcb);
+	FCB(std::string name, ClusterNo index, BytesCnt size);
+	BytesCnt getSize() { return size; }
+	void setSize(BytesCnt size) { this->size = size; }
+	std::string getName() { return name; }
+	ClusterNo getIndex() { return index; }
 };
