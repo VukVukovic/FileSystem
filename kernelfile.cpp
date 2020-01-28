@@ -12,8 +12,23 @@ const BytesCnt KernelFile::BytesPerLevel0Entry = BytesPerLevel1Entry * EntriesPe
 const BytesCnt KernelFile::MaxFileSize = BytesPerLevel0Entry * EntriesPerCluster;
 
 
-bool KernelFile::allocate(unsigned long to_alloc)
+bool KernelFile::_allocate(unsigned long to_alloc, unsigned long level1_to_alloc)
 {
+	vector<ClusterNo> taken;
+	for (int i = 0; i < to_alloc + level1_to_alloc; i++) {
+		ClusterNo newCluster = kernelFS->bit_vector.findClaim();
+		taken.push_back(newCluster);
+		if (newCluster == 0) 
+			break;
+	}
+
+	if (taken.size() != to_alloc + level1_to_alloc) {
+		for (ClusterNo c : taken)
+			kernelFS->bit_vector.free(c);
+		return false;
+	}
+
+
 	unsigned long current_clusters = fcb->getSize() / BytesPerLevel1Entry + (fcb->getSize() % BytesPerLevel1Entry > 0 ? 1 : 0);
 	unsigned long from0 = current_clusters / ClustersPerLevel0Entry;
 	unsigned long to0 = (current_clusters + to_alloc) / ClustersPerLevel0Entry + 
@@ -26,7 +41,8 @@ bool KernelFile::allocate(unsigned long to_alloc)
 	for (unsigned long i = from0; i < to0; i++) {
 		if (index0[i] == 0) {
 			dirty0 = true;
-			index0[i] = kernelFS->bit_vector.findClaim();
+			index0[i] = taken.back();
+			taken.pop_back();
 			kernelFS->_clearCluster(index0[i]);
 		}
 
@@ -38,7 +54,8 @@ bool KernelFile::allocate(unsigned long to_alloc)
 		CacheEntry ce1 = kernelFS->cluster_cache.get(index0[i]);
 		ClusterNo* index1 = (ClusterNo*)ce1.getBuffer();
 		for (unsigned long j = from1; j < to1; j++) {
-			index1[j] = kernelFS->bit_vector.findClaim();
+			index1[j] = taken.back();
+			taken.pop_back();
 			kernelFS->_clearCluster(index1[j]);
 			to_alloc--;
 			current_clusters++;
@@ -55,7 +72,7 @@ bool KernelFile::allocate(unsigned long to_alloc)
 	return true;
 }
 
-bool KernelFile::deallocate(unsigned long to_dealloc, BytesCnt new_size)
+bool KernelFile::_deallocate(unsigned long to_dealloc, BytesCnt new_size)
 {
 	unsigned long new_clusters = new_size / BytesPerLevel1Entry + 
 		(new_size % BytesPerLevel1Entry > 0 ? 1 : 0);
@@ -99,25 +116,20 @@ bool KernelFile::deallocate(unsigned long to_dealloc, BytesCnt new_size)
 	return true;
 }
 
-void KernelFile::setKernelFS(KernelFS* kfs)
+char KernelFile::_write(BytesCnt cnt, char* buffer)
 {
-	kernelFS = kfs;
-}
-
-char KernelFile::write(BytesCnt cnt, char* buffer)
-{
-	if (mode == 'r')
-		return 0;
-
 	BytesCnt new_size = pos + cnt;
 	if (new_size > MaxFileSize)
 		return 0;
 
-	unsigned long allocated_clusters = fcb->getSize() / BytesPerLevel1Entry + (fcb->getSize() % BytesPerLevel1Entry > 0?1:0);
+	unsigned long allocated_clusters = fcb->getSize() / BytesPerLevel1Entry + (fcb->getSize() % BytesPerLevel1Entry > 0 ? 1 : 0);
 	unsigned long needed_clusters = new_size / BytesPerLevel1Entry + (new_size % BytesPerLevel1Entry > 0 ? 1 : 0);
+	
+	unsigned long needed_level1 = needed_clusters / ClustersPerLevel0Entry + (needed_clusters % ClustersPerLevel0Entry > 0 ? 1 : 0) - 
+		(allocated_clusters / ClustersPerLevel0Entry + (allocated_clusters % ClustersPerLevel0Entry > 0 ? 1 : 0));
 
 	if (needed_clusters > allocated_clusters) {
-		if (!allocate(needed_clusters - allocated_clusters))
+		if (!_allocate(needed_clusters - allocated_clusters, needed_level1))
 			return 0;
 	}
 
@@ -168,21 +180,16 @@ char KernelFile::write(BytesCnt cnt, char* buffer)
 	return 1;
 }
 
-BytesCnt KernelFile::read(BytesCnt cnt, char* buffer)
+BytesCnt KernelFile::_read(BytesCnt cnt, char* buffer)
 {
-	if (eof())
-		return 0;
-
 	BytesCnt toRead = cnt;
-	if (pos + toRead > fcb->getSize())
-		toRead = fcb->getSize() - pos;
 
 	BytesCnt succRead = 0;
 	CacheEntry ce0 = (kernelFS->cluster_cache).get(fcb->getIndex());
 	ClusterNo* index0 = (ClusterNo*)ce0.getBuffer();
 
 	unsigned long from0 = pos / BytesPerLevel0Entry;
-	unsigned long to0 = (pos + toRead) / BytesPerLevel0Entry + ((pos+toRead) %BytesPerLevel0Entry>0?1:0);
+	unsigned long to0 = (pos + toRead) / BytesPerLevel0Entry + ((pos + toRead) % BytesPerLevel0Entry > 0 ? 1 : 0);
 
 	for (unsigned long i = from0; i < to0; i++) {
 		CacheEntry ce1 = (kernelFS->cluster_cache).get(index0[i]);
@@ -194,10 +201,10 @@ BytesCnt KernelFile::read(BytesCnt cnt, char* buffer)
 			toRead_rel = BytesPerLevel0Entry - pos_rel;
 
 		unsigned long from1 = pos_rel / BytesPerLevel1Entry;
-		unsigned long to1 = (pos_rel+toRead_rel) / BytesPerLevel1Entry + ((pos_rel + toRead_rel) % BytesPerLevel1Entry > 0 ? 1 : 0);
+		unsigned long to1 = (pos_rel + toRead_rel) / BytesPerLevel1Entry + ((pos_rel + toRead_rel) % BytesPerLevel1Entry > 0 ? 1 : 0);
 
 		for (unsigned long j = from1; j < to1; j++) {
-			unsigned long start = pos_rel - j*BytesPerLevel1Entry;
+			unsigned long start = pos_rel - j * BytesPerLevel1Entry;
 			unsigned long size = toRead;
 			if (start + size > BytesPerLevel1Entry)
 				size = BytesPerLevel1Entry - start;
@@ -217,6 +224,52 @@ BytesCnt KernelFile::read(BytesCnt cnt, char* buffer)
 	ce0.unlock();
 	return succRead;
 }
+
+void KernelFile::setKernelFS(KernelFS* kfs)
+{
+	kernelFS = kfs;
+}
+
+char KernelFile::write(BytesCnt cnt, char* buffer)
+{
+	if (mode == 'r')
+		return 0;
+
+	//unsigned long allocated = fcb->getSize() / BytesPerLevel1Entry + 
+	//	(fcb->getSize() % BytesPerLevel1Entry > 0 ? 1 : 0);
+
+	return _write(cnt, buffer);
+}
+
+BytesCnt KernelFile::read(BytesCnt cnt, char* buffer)
+{
+	if (mode == 'w' || eof())
+		return 0;
+	
+	if (mode == 'a')
+		return _read(cnt, buffer);
+
+	if (pos + cnt > fcb->getSize())
+		cnt = fcb->getSize() - pos;
+
+	if (pos >= rd_pos && cnt <= rd_buff_size - (pos - rd_pos)) {
+		memcpy(buffer, rd_buffer + (pos - rd_pos), cnt);
+		pos += cnt;
+		return cnt;
+	}
+
+	if (cnt <= ClusterSize) {
+		rd_pos = pos;
+		rd_buff_size = _read(ClusterSize, rd_buffer);
+		memcpy(buffer, rd_buffer, cnt);
+		pos = rd_pos + cnt; // changed pos, fix
+		return cnt;
+	}
+
+	return _read(cnt, buffer);
+}
+
+
 
 char KernelFile::seek(BytesCnt pos)
 {
@@ -253,7 +306,7 @@ char KernelFile::truncate()
 	unsigned long needed_clusters = new_size / BytesPerLevel1Entry + (new_size % BytesPerLevel1Entry > 0 ? 1 : 0);
 
 	if (allocated_clusters > needed_clusters)
-		deallocate(allocated_clusters - needed_clusters, new_size);
+		_deallocate(allocated_clusters - needed_clusters, new_size);
 
 	fcb->setSize(new_size);
 	return 1;

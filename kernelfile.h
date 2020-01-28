@@ -16,8 +16,15 @@ class KernelFile {
     BytesCnt pos=0;
     KernelFS* kernelFS;
 
-    bool allocate(unsigned long to_alloc);
-    bool deallocate(unsigned long to_dealloc, BytesCnt new_size);
+    char rd_buffer[ClusterSize];
+    BytesCnt rd_pos = -1; 
+    unsigned long rd_buff_size = 0;
+    //char wrBuffer[ClusterSize];
+
+    bool _allocate(unsigned long to_alloc, unsigned long level1_to_alloc);
+    bool _deallocate(unsigned long to_dealloc, BytesCnt new_size);
+    char _write(BytesCnt cnt, char* buffer);
+    BytesCnt _read(BytesCnt cnt, char* buffer);
 
 public:
     KernelFile(char mode, FCB* fcb) : mode(mode), fcb(fcb) { if (mode == 'a') pos = fcb->getSize(); }

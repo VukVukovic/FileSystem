@@ -120,13 +120,13 @@ bool KernelFS::_deallocateFileClusters(ClusterNo cj, unsigned long k1)
 
 void KernelFS::_finishedOperation(FCB* fcb, char mode, std::unique_lock<std::mutex>&)
 {
-	cout << "FINISHED OPERATION!" << endl;
+	//cout << "FINISHED OPERATION!" << endl;
 	if (mode == 'r')
 		fcb->users--;
 	else
 		fcb->exclusive = false;
 	
-	cout << fcb->users << " " << fcb->exclusive << " " << fcb->waiting << endl;
+	//cout << fcb->users << " " << fcb->exclusive << " " << fcb->waiting << endl;
 
 	// notify waiting for file
 	if (fcb->users == 0 && !fcb->exclusive)
@@ -332,9 +332,9 @@ char KernelFS::_unmount(std::unique_lock<std::mutex>& lck)
 
 	// wait for all files to be closed
 	while (opened_files.size() > 0) {
-		cout << "OPENED FILES " << opened_files.size() << endl;
-		for (auto p : opened_files)
-			cout << p.first << endl;
+		//cout << "OPENED FILES " << opened_files.size() << endl;
+		//for (auto p : opened_files)
+		//	cout << p.first << endl;
 		cvOpenFiles.wait(lck);
 	}
 
