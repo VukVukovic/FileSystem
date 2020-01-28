@@ -6,7 +6,6 @@ using namespace std;
 
 File::~File()
 {
-	cout << "FILE DEST" << endl;
 	delete myImpl;
 	myImpl = nullptr;
 }

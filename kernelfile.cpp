@@ -17,7 +17,7 @@ bool KernelFile::allocate(unsigned long to_alloc)
 	unsigned long current_clusters = fcb->getSize() / BytesPerLevel1Entry + (fcb->getSize() % BytesPerLevel1Entry > 0 ? 1 : 0);
 	unsigned long from0 = current_clusters / ClustersPerLevel0Entry;
 	unsigned long to0 = (current_clusters + to_alloc) / ClustersPerLevel0Entry + 
-		(current_clusters + to_alloc) % ClustersPerLevel0Entry;
+		((current_clusters + to_alloc) % ClustersPerLevel0Entry > 0 ? 1 : 0);
 
 	CacheEntry ce0 = kernelFS->cluster_cache.get(fcb->getIndex());
 	ClusterNo* index0 = (ClusterNo*)ce0.getBuffer();
@@ -61,7 +61,7 @@ bool KernelFile::deallocate(unsigned long to_dealloc, BytesCnt new_size)
 		(new_size % BytesPerLevel1Entry > 0 ? 1 : 0);
 	unsigned long from0 = new_clusters / ClustersPerLevel0Entry;
 	unsigned long to0 = (new_clusters + to_dealloc) / ClustersPerLevel0Entry +
-		(new_clusters + to_dealloc) % ClustersPerLevel0Entry;
+		((new_clusters + to_dealloc) % ClustersPerLevel0Entry > 0 ? 1:0);
 
 	CacheEntry ce0 = kernelFS->cluster_cache.get(fcb->getIndex());
 	ClusterNo* index0 = (ClusterNo*)ce0.getBuffer();
@@ -157,6 +157,7 @@ char KernelFile::write(BytesCnt cnt, char* buffer)
 			to_write -= size;
 			pos += size;
 			pos_rel += size;
+			cc.markDirty();
 			cc.unlock();
 		}
 		ce1.unlock();

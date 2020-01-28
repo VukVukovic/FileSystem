@@ -148,6 +148,8 @@
     <ClCompile Include="kernelfile.cpp" />
     <ClCompile Include="kernelfs.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="nit1.cpp" />
+    <ClCompile Include="nit2.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="bitvector.h" />
@@ -160,6 +162,7 @@
     <ClInclude Include="kernelfile.h" />
     <ClInclude Include="kernelfs.h" />
     <ClInclude Include="part.h" />
+    <ClInclude Include="testprimer.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
