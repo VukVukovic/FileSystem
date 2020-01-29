@@ -238,6 +238,13 @@ char KernelFile::write(BytesCnt cnt, char* buffer)
 	//unsigned long allocated = fcb->getSize() / BytesPerLevel1Entry + 
 	//	(fcb->getSize() % BytesPerLevel1Entry > 0 ? 1 : 0);
 
+	// invalid read buffer if appending to same area
+	if (mode == 'a' && rd_buff_size > 0) {
+		if ((pos >= rd_pos && pos < rd_pos+rd_buff_size) ||
+			(pos+cnt >= rd_pos && pos+cnt < rd_pos+rd_buff_size))
+			rd_buff_size = 0;
+	}
+
 	return _write(cnt, buffer);
 }
 
@@ -245,9 +252,6 @@ BytesCnt KernelFile::read(BytesCnt cnt, char* buffer)
 {
 	if (mode == 'w' || eof())
 		return 0;
-	
-	if (mode == 'a')
-		return _read(cnt, buffer);
 
 	if (pos + cnt > fcb->getSize())
 		cnt = fcb->getSize() - pos;
@@ -314,7 +318,7 @@ char KernelFile::truncate()
 
 KernelFile::~KernelFile()
 {
-	cout << "KERNEL FILE DEST " << endl;
+	//cout << "KERNEL FILE DEST " << endl;
 	kernelFS->finishedOperation(fcb, mode);
 	fcb = nullptr;
 }
